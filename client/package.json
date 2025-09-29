@@ -1,0 +1,24 @@
+{
+  "name": "admin-api-client",
+  "version": "1.0.0",
+  "description": "JavaScript client for Admin API Backend with Basic Auth support",
+  "main": "api-client.js",
+  "types": "types.d.ts",
+  "scripts": {
+    "test": "echo \"No tests configured\" && exit 0"
+  },
+  "keywords": [
+    "api",
+    "client",
+    "admin",
+    "react",
+    "vite",
+    "basic-auth"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  }
+}

@@ -35,3 +35,16 @@ class DatabaseInDB(DatabaseBase):
 
 class DatabaseResponse(DatabaseInDB):
     pass
+
+
+class DatabaseTestConnection(BaseModel):
+    """Schema for testing database connection."""
+    type: str = 'sqlserver'
+    connection_string: str
+
+
+class DatabaseTestConnectionResponse(BaseModel):
+    """Response for database connection test."""
+    success: bool
+    message: str
+    latency_ms: float | None = None

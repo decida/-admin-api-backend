@@ -196,7 +196,7 @@ def test_database_connection(
 
         # Clean up error message for common issues
         if "timeout" in error_message.lower():
-            error_message = "Connection timeout (15s exceeded)"
+            error_message = "Connection timeout (10s exceeded)"
         elif "authentication" in error_message.lower() or "password" in error_message.lower():
             error_message = "Authentication failed - check credentials"
         elif "host" in error_message.lower() or "connection refused" in error_message.lower():

@@ -28,9 +28,10 @@ class DatabaseUpdate(BaseModel):
 class DatabaseInDB(DatabaseBase):
     model_config = ConfigDict(from_attributes=True)
 
-    id: UUID
-    created_at: datetime
-    updated_at: datetime
+    id: UUID | str  # Accept both UUID and string (from cache)
+    slug: str
+    created_at: datetime | str  # Accept both datetime and string (from cache)
+    updated_at: datetime | str  # Accept both datetime and string (from cache)
 
 
 class DatabaseResponse(DatabaseInDB):

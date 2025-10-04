@@ -8,6 +8,7 @@ API backend desenvolvida com FastAPI, PostgreSQL e SQLAlchemy.
 - **FastAPI** - Framework web moderno e rápido
 - **SQLAlchemy 2.0** - ORM para banco de dados
 - **PostgreSQL** - Banco de dados relacional
+- **Redis** - Cache em memória para performance
 - **Poetry** - Gerenciamento de dependências
 - **Docker & Docker Compose** - Containerização
 
@@ -41,6 +42,7 @@ API backend desenvolvida com FastAPI, PostgreSQL e SQLAlchemy.
 - Python 3.11+
 - Poetry
 - PostgreSQL 15+
+- Redis 7+ (opcional, para cache)
 - Docker e Docker Compose (opcional)
 
 ### Variáveis de Ambiente
@@ -64,11 +66,12 @@ poetry install
 #### Opção A: Com Docker (Recomendado)
 
 ```bash
-# Iniciar PostgreSQL
-docker-compose up -d db
+# Iniciar PostgreSQL e Redis
+docker-compose up -d db redis
 
 # Executar scripts SQL
 docker exec -i admin-api-db psql -U admin -d admindb < sql/001_create_databases_table.sql
+docker exec -i admin-api-db psql -U admin -d admindb < sql/002_add_slug_to_databases.sql
 ```
 
 #### Opção B: PostgreSQL Local
@@ -168,18 +171,34 @@ curl -X POST "http://localhost:8000/api/v1/databases/" \
 
 ```bash
 curl "http://localhost:8000/api/v1/databases/"
+
+# Verificar se está usando cache (header X-Cache-Status)
+curl -I "http://localhost:8000/api/v1/databases/"
+# X-Cache-Status: HIT (cache) ou MISS (banco de dados)
 ```
 
-### Buscar por ID
+### Buscar por ID ou slug
 
 ```bash
+# Por UUID
 curl "http://localhost:8000/api/v1/databases/{uuid}"
+
+# Por slug
+curl "http://localhost:8000/api/v1/databases/my-sqlserver-db"
 ```
 
 ### Atualizar
 
 ```bash
+# Por UUID
 curl -X PATCH "http://localhost:8000/api/v1/databases/{uuid}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "inactive"
+  }'
+
+# Por slug
+curl -X PATCH "http://localhost:8000/api/v1/databases/my-sqlserver-db" \
   -H "Content-Type: application/json" \
   -d '{
     "status": "inactive"
@@ -189,5 +208,9 @@ curl -X PATCH "http://localhost:8000/api/v1/databases/{uuid}" \
 ### Deletar
 
 ```bash
+# Por UUID
 curl -X DELETE "http://localhost:8000/api/v1/databases/{uuid}"
+
+# Por slug
+curl -X DELETE "http://localhost:8000/api/v1/databases/my-sqlserver-db"
 ```

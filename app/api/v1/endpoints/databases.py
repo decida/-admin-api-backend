@@ -342,13 +342,17 @@ def test_database_connection(
     """
     Test database connection with 10 second timeout.
     Supports PostgreSQL, MySQL, SQLite, and other SQLAlchemy-compatible databases.
+    Connection string is expected to be encrypted and will be decrypted before use.
     """
     start_time = time.time()
 
     try:
+        # Decrypt connection string before using
+        decrypted_connection_string = decrypt_connection_string(connection_data.connection_string)
+
         # Create engine with 10 second connection timeout
         engine = create_engine(
-            connection_data.connection_string,
+            decrypted_connection_string,
             connect_args={"connect_timeout": 10},
             pool_pre_ping=True,
             pool_size=1,

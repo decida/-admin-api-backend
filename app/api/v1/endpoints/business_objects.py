@@ -16,6 +16,7 @@ from app.schemas.business_object import (
     BusinessObjectTestRequest,
     BusinessObjectTestResponse,
 )
+from app.utils.parameter_validation import validate_parameters, convert_to_dict
 
 router = APIRouter()
 
@@ -63,6 +64,84 @@ def replace_parameters(sql_command: str, parameters: dict[str, str]) -> str:
     return result_sql
 
 
+def replace_colon_parameters(sql_command: str, parameters: dict[str, str], business_object: BusinessObject) -> str:
+    """
+    Replace placeholders in SQL command with actual values using :parameter format.
+    Uses the params definition from the business object to determine types and defaults.
+
+    Args:
+        sql_command: SQL command with placeholders in format :parameter_name
+        parameters: Dictionary with parameter values (from request)
+        business_object: BusinessObject with params definitions
+
+    Returns:
+        SQL command with replaced values (with proper typing and defaults)
+    """
+    from app.utils.parameter_validation import extract_sql_parameters, convert_from_dict
+
+    # Extract parameters from SQL
+    sql_params = extract_sql_parameters(sql_command)
+
+    # Convert params from dict to SqlParameter objects
+    param_definitions = {p.name: p for p in convert_from_dict(business_object.params)}
+
+    # Replace parameters in SQL
+    result_sql = sql_command
+    for param_name in sql_params:
+        placeholder = f":{param_name}"
+
+        # Get parameter definition
+        param_def = param_definitions.get(param_name)
+
+        # Determine the value to use
+        if param_name in parameters and parameters[param_name] is not None and parameters[param_name] != "":
+            # Use provided value
+            value = parameters[param_name]
+
+            # Type conversion based on param definition
+            if param_def:
+                if param_def.type == "number":
+                    # No quotes for numbers
+                    try:
+                        # Validate it's a number
+                        float(value)
+                        result_sql = result_sql.replace(placeholder, str(value))
+                    except ValueError:
+                        # If not a valid number, treat as NULL
+                        result_sql = result_sql.replace(placeholder, "NULL")
+                elif param_def.type == "date":
+                    # Quotes for dates
+                    safe_value = str(value).replace("'", "''")
+                    result_sql = result_sql.replace(placeholder, f"'{safe_value}'")
+                else:  # string
+                    # Escape single quotes and add quotes
+                    safe_value = str(value).replace("'", "''")
+                    result_sql = result_sql.replace(placeholder, f"'{safe_value}'")
+            else:
+                # No definition, treat as string
+                safe_value = str(value).replace("'", "''")
+                result_sql = result_sql.replace(placeholder, f"'{safe_value}'")
+
+        elif param_def and param_def.defaultValue is not None:
+            # Use default value from definition
+            default_val = param_def.defaultValue
+
+            if param_def.type == "number":
+                result_sql = result_sql.replace(placeholder, str(default_val))
+            elif param_def.type == "date":
+                safe_value = str(default_val).replace("'", "''")
+                result_sql = result_sql.replace(placeholder, f"'{safe_value}'")
+            else:  # string
+                safe_value = str(default_val).replace("'", "''")
+                result_sql = result_sql.replace(placeholder, f"'{safe_value}'")
+
+        else:
+            # No value provided and no default - use NULL
+            result_sql = result_sql.replace(placeholder, "NULL")
+
+    return result_sql
+
+
 @router.get("/", response_model=list[BusinessObjectResponse])
 def get_business_objects(
     skip: int = 0,
@@ -104,7 +183,19 @@ def create_business_object(
     Create new business object.
     SQL command must be provided in BASE64.
     Command type cannot be changed after creation.
+    Parameters are validated against the SQL command.
     """
+    # Validate parameters
+    is_valid, errors = validate_parameters(business_object_in.sql_command, business_object_in.params)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "Parameter validation failed",
+                "details": errors
+            }
+        )
+
     # Check if name already exists
     existing = db.query(BusinessObject).filter(BusinessObject.name == business_object_in.name).first()
     if existing:
@@ -113,8 +204,12 @@ def create_business_object(
             detail=f"Business object with name '{business_object_in.name}' already exists",
         )
 
+    # Convert params to dict for storage
+    data = business_object_in.model_dump()
+    data['params'] = convert_to_dict(business_object_in.params)
+
     # Create business object
-    business_object = BusinessObject(**business_object_in.model_dump())
+    business_object = BusinessObject(**data)
     db.add(business_object)
     db.commit()
     db.refresh(business_object)
@@ -132,6 +227,7 @@ def update_business_object(
     Update business object.
     Command type cannot be changed after creation (excluded from update schema).
     SQL command must be in BASE64 if provided.
+    Parameters are validated against the SQL command if either sql_command or params are updated.
     """
     business_object = db.query(BusinessObject).filter(BusinessObject.id == id).first()
     if not business_object:
@@ -149,8 +245,30 @@ def update_business_object(
                 detail=f"Business object with name '{business_object_in.name}' already exists",
             )
 
+    # Validate parameters if sql_command or params are being updated
+    if business_object_in.sql_command is not None or business_object_in.params is not None:
+        # Use updated sql_command if provided, otherwise use existing
+        sql_to_validate = business_object_in.sql_command if business_object_in.sql_command is not None else business_object.sql_command
+        # Use updated params if provided, otherwise use existing (convert from dict)
+        from app.utils.parameter_validation import convert_from_dict
+        params_to_validate = business_object_in.params if business_object_in.params is not None else convert_from_dict(business_object.params)
+
+        is_valid, errors = validate_parameters(sql_to_validate, params_to_validate)
+        if not is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "Parameter validation failed",
+                    "details": errors
+                }
+            )
+
     # Update fields
     update_data = business_object_in.model_dump(exclude_unset=True)
+    # Convert params to dict if present
+    if 'params' in update_data and update_data['params'] is not None:
+        update_data['params'] = convert_to_dict(business_object_in.params)
+
     for field, value in update_data.items():
         setattr(business_object, field, value)
 
@@ -191,7 +309,7 @@ def test_business_object(
     Process:
     1. Fetch business object by ID
     2. Decode SQL from BASE64
-    3. Replace placeholders {{parameter}} with provided values
+    3. Replace placeholders :parameter with provided values (uses param definitions for typing)
     4. Fetch connection by connection_id
     5. Execute SQL on specified connection
     6. Return results or error
@@ -213,8 +331,22 @@ def test_business_object(
             error=f"Failed to decode SQL command: {str(e)}"
         )
 
-    # 3. Replace placeholders with parameters (all optional, missing = NULL)
-    final_sql = replace_parameters(decoded_sql, test_request.parameters)
+    # 3. Replace placeholders with parameters
+    from app.utils.parameter_validation import extract_sql_parameters
+
+    # Detect which parameter format is used in the SQL
+    colon_params = extract_sql_parameters(decoded_sql)  # Extracts :parameter format
+    brace_params = extract_parameters(decoded_sql)       # Extracts {{parameter}} format
+
+    if colon_params:
+        # Use new :parameter format with type-aware replacement
+        final_sql = replace_colon_parameters(decoded_sql, test_request.parameters, business_object)
+    elif brace_params:
+        # Use legacy {{parameter}} format
+        final_sql = replace_parameters(decoded_sql, test_request.parameters)
+    else:
+        # No parameters to replace - use SQL as is
+        final_sql = decoded_sql
 
     # 4. Fetch connection
     connection = db.query(Database).filter(Database.id == test_request.connection_id).first()

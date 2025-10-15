@@ -4,7 +4,7 @@ import enum
 
 from sqlalchemy import String, DateTime, Text, Enum as SQLEnum, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -35,6 +35,12 @@ class BusinessObject(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # Relacionamento com API Resources
+    api_resources: Mapped[list["ApiResource"]] = relationship(
+        "ApiResource",
+        back_populates="business_object"
     )
 
     def __repr__(self) -> str:

@@ -49,12 +49,20 @@ app = FastAPI(
 )
 
 # Configure CORS
+# Explicitly allow only the frontend origin
+# This is more secure than allowing all origins (*)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
+    allow_origins=[
+        "http://localhost:5173",  # Vite dev server
+        "http://127.0.0.1:5173",  # Alternative localhost,
+        "http://decida-admin-api-frontend.woelbp.easypanel.host"
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
 
 # Include API router

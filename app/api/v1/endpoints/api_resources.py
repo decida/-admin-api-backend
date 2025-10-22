@@ -1,4 +1,5 @@
 from uuid import UUID
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -10,6 +11,7 @@ from app.schemas.api_resource import (
     ApiResourceCreate,
     ApiResourceResponse,
     ApiResourceUpdate,
+    ExecutionChainStep,
 )
 from app.utils.parameter_validation import convert_from_dict
 
@@ -27,6 +29,65 @@ def convert_params_to_camel_case(params: list[dict]) -> list[dict]:
             "defaultValue": param.get("default_value") or param.get("defaultValue")
         }
         result.append(converted)
+    return result
+
+
+def convert_execution_chain_to_json_serializable(chain: list[ExecutionChainStep] | None) -> list[dict] | None:
+    """
+    Convert execution chain to JSON-serializable dict format.
+    Converts UUIDs to strings to avoid JSON serialization errors.
+    """
+    if chain is None:
+        return None
+
+    result = []
+    for step in chain:
+        # Convert step to dict with by_alias=True to get camelCase keys
+        step_dict = step.model_dump(by_alias=True, mode='json')
+
+        # Ensure businessObjectId is a string
+        if 'businessObjectId' in step_dict and isinstance(step_dict['businessObjectId'], UUID):
+            step_dict['businessObjectId'] = str(step_dict['businessObjectId'])
+
+        result.append(step_dict)
+
+    return result
+
+
+def convert_execution_chain_to_camel_case(chain: list[dict] | None) -> list[dict] | None:
+    """Convert execution chain from snake_case to camelCase for API response."""
+    if chain is None:
+        return None
+
+    result = []
+    for step in chain:
+        # Convert parameter mappings
+        mappings = []
+        for mapping in step.get("parameterMappings", step.get("parameter_mappings", [])):
+            var_source = mapping.get("variableSource", mapping.get("variable_source", {}))
+            converted_mapping = {
+                "parameterName": mapping.get("parameterName", mapping.get("parameter_name")),
+                "sourceType": mapping.get("sourceType", mapping.get("source_type")),
+                "staticValue": mapping.get("staticValue", mapping.get("static_value", "")),
+                "variableSource": {
+                    "stepIndex": var_source.get("stepIndex", var_source.get("step_index")),
+                    "fieldName": var_source.get("fieldName", var_source.get("field_name", ""))
+                }
+            }
+            mappings.append(converted_mapping)
+
+        converted_step = {
+            "businessObjectId": step.get("businessObjectId", step.get("business_object_id")),
+            "businessObjectName": step.get("businessObjectName", step.get("business_object_name")),
+            "businessObjectType": step.get("businessObjectType", step.get("business_object_type")),
+            "businessObjectParams": convert_params_to_camel_case(
+                step.get("businessObjectParams", step.get("business_object_params", []))
+            ),
+            "order": step.get("order"),
+            "parameterMappings": mappings
+        }
+        result.append(converted_step)
+
     return result
 
 
@@ -54,6 +115,7 @@ def get_api_resources(
             "businessObjectId": resource.business_object_id,
             "businessObjectName": resource.business_object_name,
             "businessObjectParams": convert_params_to_camel_case(resource.business_object_params),
+            "executionChain": convert_execution_chain_to_camel_case(resource.execution_chain),
             "createdAt": resource.created_at,
             "updatedAt": resource.updated_at,
         }
@@ -88,6 +150,7 @@ def get_api_resource(
         "businessObjectId": api_resource.business_object_id,
         "businessObjectName": api_resource.business_object_name,
         "businessObjectParams": convert_params_to_camel_case(api_resource.business_object_params),
+        "executionChain": convert_execution_chain_to_camel_case(api_resource.execution_chain),
         "createdAt": api_resource.created_at,
         "updatedAt": api_resource.updated_at,
     }
@@ -127,6 +190,25 @@ def create_api_resource(
             detail=f"Business object with id {api_resource_in.business_object_id} not found",
         )
 
+    # Validate execution chain if provided
+    if api_resource_in.execution_chain:
+        from app.utils.chain_validation import validate_chain_for_resource
+
+        is_valid, validation_errors = validate_chain_for_resource(
+            api_resource_in.execution_chain,
+            api_resource_in.business_object_id,
+            db
+        )
+
+        if not is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid execution chain: {'; '.join(validation_errors)}"
+            )
+
+    # Convert execution_chain to dict format for database storage
+    execution_chain_data = convert_execution_chain_to_json_serializable(api_resource_in.execution_chain)
+
     # Create API resource with snapshot of Business Object metadata
     api_resource = ApiResource(
         path=api_resource_in.path,
@@ -136,6 +218,7 @@ def create_api_resource(
         business_object_id=api_resource_in.business_object_id,
         business_object_name=business_object.name,
         business_object_params=business_object.params,
+        execution_chain=execution_chain_data,
     )
 
     db.add(api_resource)
@@ -152,6 +235,7 @@ def create_api_resource(
         "businessObjectId": api_resource.business_object_id,
         "businessObjectName": api_resource.business_object_name,
         "businessObjectParams": convert_params_to_camel_case(api_resource.business_object_params),
+        "executionChain": convert_execution_chain_to_camel_case(api_resource.execution_chain),
         "createdAt": api_resource.created_at,
         "updatedAt": api_resource.updated_at,
     }
@@ -209,13 +293,39 @@ def update_api_resource(
         api_resource.business_object_params = business_object.params
 
     # Update other fields
-    update_data = api_resource_in.model_dump(exclude_unset=True, exclude={'business_object_id'})
+    update_data = api_resource_in.model_dump(exclude_unset=True, exclude={'business_object_id', 'execution_chain'})
     for field, value in update_data.items():
         # Convert camelCase to snake_case
         if field == 'isActive':
             setattr(api_resource, 'is_active', value)
         else:
             setattr(api_resource, field, value)
+
+    # Handle execution_chain update separately
+    if api_resource_in.execution_chain is not None:
+        from app.utils.chain_validation import validate_chain_for_resource
+
+        # Determine which business_object_id to use for validation
+        bo_id_to_validate = (
+            api_resource_in.business_object_id
+            if api_resource_in.business_object_id
+            else api_resource.business_object_id
+        )
+
+        is_valid, validation_errors = validate_chain_for_resource(
+            api_resource_in.execution_chain,
+            bo_id_to_validate,
+            db
+        )
+
+        if not is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid execution chain: {'; '.join(validation_errors)}"
+            )
+
+        execution_chain_data = convert_execution_chain_to_json_serializable(api_resource_in.execution_chain)
+        api_resource.execution_chain = execution_chain_data
 
     db.commit()
     db.refresh(api_resource)
@@ -230,6 +340,7 @@ def update_api_resource(
         "businessObjectId": api_resource.business_object_id,
         "businessObjectName": api_resource.business_object_name,
         "businessObjectParams": convert_params_to_camel_case(api_resource.business_object_params),
+        "executionChain": convert_execution_chain_to_camel_case(api_resource.execution_chain),
         "createdAt": api_resource.created_at,
         "updatedAt": api_resource.updated_at,
     }
@@ -303,6 +414,7 @@ def toggle_api_resource(
         "businessObjectId": api_resource.business_object_id,
         "businessObjectName": api_resource.business_object_name,
         "businessObjectParams": convert_params_to_camel_case(api_resource.business_object_params),
+        "executionChain": convert_execution_chain_to_camel_case(api_resource.execution_chain),
         "createdAt": api_resource.created_at,
         "updatedAt": api_resource.updated_at,
     }

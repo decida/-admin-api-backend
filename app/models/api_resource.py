@@ -31,6 +31,9 @@ class ApiResource(Base):
     business_object_name: Mapped[str] = mapped_column(String(255), nullable=False)
     business_object_params: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
 
+    # Execution chain for sequential business object execution
+    execution_chain: Mapped[list | None] = mapped_column(JSONB, default=None, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

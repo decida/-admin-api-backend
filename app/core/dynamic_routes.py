@@ -117,14 +117,16 @@ async def execute_dynamic_endpoint(
     """
     Execute a dynamic API resource endpoint.
 
-    This function:
+    This function handles two execution modes:
+    1. Legacy mode (single business object): Uses business_object_id
+    2. Chain mode (multiple business objects): Uses execution_chain
+
+    Flow:
     1. Fetches the API resource by ID
     2. Validates it's active
-    3. Fetches the associated Business Object
-    4. Decodes the SQL command
-    5. Replaces parameters with values from request body
-    6. Executes the SQL on the specified connection
-    7. Returns results
+    3. Checks if execution_chain exists
+    4. If chain exists: execute_chain()
+    5. If no chain: execute single business object (legacy mode)
 
     Args:
         request: FastAPI request object
@@ -178,6 +180,52 @@ async def execute_dynamic_endpoint(
 
     # Get parameters (everything except connection_id)
     parameters = {k: v for k, v in body.items() if k not in ['connection_id', 'connectionId']}
+
+    # COMPATIBILITY: Check if execution_chain exists and has steps
+    # - If execution_chain exists: Use chain execution mode (new feature)
+    # - If execution_chain is None/empty: Use legacy single business object mode
+    # This ensures backward compatibility with existing resources created before chain feature
+    if api_resource.execution_chain and len(api_resource.execution_chain) > 0:
+        # Chain mode: execute chain
+        from app.core.chain_executor import execute_chain, ChainExecutionException
+        from app.schemas.api_resource import ExecutionChainStep
+
+        try:
+            # Convert execution_chain to ExecutionChainStep objects
+            chain_steps = [ExecutionChainStep(**step) for step in api_resource.execution_chain]
+
+            # Execute chain
+            result = execute_chain(
+                chain=chain_steps,
+                request_payload=parameters,
+                connection_id=connection_id,
+                db=db
+            )
+
+            return result
+
+        except ChainExecutionException as e:
+            logger.error(f"Chain execution failed: {e.message}")
+            return {
+                "success": False,
+                "error": {
+                    "message": e.message,
+                    "step": e.step,
+                    "businessObjectName": e.business_object_name,
+                    "details": e.details
+                }
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error in chain execution: {str(e)}")
+            return {
+                "success": False,
+                "error": {
+                    "message": f"Unexpected error: {str(e)}",
+                    "details": str(e)
+                }
+            }
+
+    # Legacy mode: execute single business object
 
     # 5. Decode SQL command
     try:

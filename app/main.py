@@ -22,17 +22,6 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting application...")
 
-    # Initialize dynamic routes from database
-    try:
-        db = SessionLocal()
-        try:
-            refresh_dynamic_routes(db)
-            logger.info("Dynamic routes initialized successfully")
-        finally:
-            db.close()
-    except Exception as e:
-        logger.error(f"Failed to initialize dynamic routes: {e}")
-
     yield
 
     # Shutdown
@@ -64,6 +53,18 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=3600,  # Cache preflight requests for 1 hour
 )
+
+# Initialize dynamic routes from database BEFORE including the router
+logger.info("Initializing dynamic routes from database...")
+try:
+    db = SessionLocal()
+    try:
+        refresh_dynamic_routes(db)
+        logger.info("Dynamic routes initialized successfully")
+    finally:
+        db.close()
+except Exception as e:
+    logger.error(f"Failed to initialize dynamic routes: {e}")
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)

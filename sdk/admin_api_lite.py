@@ -150,6 +150,60 @@ class AdminAPILite:
             parameters=parameters or {}
         )
 
+    def list_api_resources(self, active_only: bool = True) -> list[Dict[str, Any]]:
+        """
+        List API resources from Admin API.
+
+        Args:
+            active_only: If True, returns only active resources (default: True)
+
+        Returns:
+            List of API resource dictionaries
+
+        Raises:
+            AdminAPILiteError: If request fails
+
+        Example:
+            >>> client = AdminAPILite("http://localhost:8000")
+            >>> resources = client.list_api_resources()
+            >>> for resource in resources:
+            ...     print(f"{resource['method']} {resource['path']}")
+        """
+        endpoint = f"{self.api_prefix}/api-resources"
+        if active_only:
+            endpoint += "?isActive=true"
+
+        response = self._make_request("GET", endpoint)
+
+        # Response pode ser uma lista ou um dict com 'items'
+        if isinstance(response, list):
+            return response
+        elif isinstance(response, dict) and 'items' in response:
+            return response['items']
+        else:
+            return []
+
+    def get_database(self, database_id: str) -> Dict[str, Any]:
+        """
+        Get database connection by ID.
+
+        Args:
+            database_id: UUID of the database connection
+
+        Returns:
+            Dictionary containing database metadata
+
+        Raises:
+            AdminAPILiteError: If database not found or request fails
+
+        Example:
+            >>> client = AdminAPILite("http://localhost:8000")
+            >>> db = client.get_database("abc-123-def")
+            >>> print(db['connectionString'])
+        """
+        endpoint = f"{self.api_prefix}/databases/{database_id}"
+        return self._make_request("GET", endpoint)
+
     def _get_resource(self, resource_id: str) -> Dict[str, Any]:
         """
         Get API resource metadata by ID.

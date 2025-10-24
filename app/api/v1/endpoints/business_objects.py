@@ -348,12 +348,14 @@ def test_business_object(
         # No parameters to replace - use SQL as is
         final_sql = decoded_sql
 
-    # 4. Fetch connection
-    connection = db.query(Database).filter(Database.id == test_request.connection_id).first()
-    if not connection:
+    # 4. Fetch connection (accepts both ID and slug)
+    from app.utils.slug import get_database_by_id_or_slug
+    try:
+        connection = get_database_by_id_or_slug(test_request.connection_id, db)
+    except HTTPException:
         return BusinessObjectTestResponse(
             success=False,
-            error=f"Connection with id {test_request.connection_id} not found"
+            error=f"Connection with id or slug '{test_request.connection_id}' not found"
         )
 
     if connection.status.value != "active":

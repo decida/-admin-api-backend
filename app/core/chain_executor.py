@@ -10,6 +10,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
@@ -287,11 +288,13 @@ def execute_chain(
     Raises:
         ChainExecutionException: If execution fails at any step
     """
-    # Fetch database connection
-    connection = db.query(Database).filter(Database.id == connection_id).first()
-    if not connection:
+    # Fetch database connection (accepts both ID and slug)
+    from app.utils.slug import get_database_by_id_or_slug
+    try:
+        connection = get_database_by_id_or_slug(connection_id, db)
+    except HTTPException as e:
         raise ChainExecutionException(
-            f"Connection with id {connection_id} not found"
+            f"Connection with id or slug '{connection_id}' not found"
         )
 
     if connection.status.value != "active":

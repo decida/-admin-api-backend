@@ -1,7 +1,9 @@
 from uuid import UUID
 import json
+from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -16,6 +18,13 @@ from app.schemas.api_resource import (
 from app.utils.parameter_validation import convert_from_dict
 
 router = APIRouter()
+
+
+class ExecuteResourceRequest(BaseModel):
+    """Request schema for generic resource execution."""
+    resource_id: UUID = Field(..., description="API Resource UUID")
+    connection_id: str = Field(..., description="Database connection ID (UUID) or slug")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Resource parameters")
 
 
 def convert_params_to_camel_case(params: list[dict]) -> list[dict]:
@@ -240,13 +249,6 @@ def create_api_resource(
         "updatedAt": api_resource.updated_at,
     }
 
-    # Trigger dynamic route refresh (will be implemented later)
-    try:
-        from app.core.dynamic_routes import refresh_dynamic_routes
-        refresh_dynamic_routes(db)
-    except ImportError:
-        pass  # Dynamic routes not yet implemented
-
     return ApiResourceResponse(**resource_dict)
 
 
@@ -345,14 +347,61 @@ def update_api_resource(
         "updatedAt": api_resource.updated_at,
     }
 
-    # Trigger dynamic route refresh
-    try:
-        from app.core.dynamic_routes import refresh_dynamic_routes
-        refresh_dynamic_routes(db)
-    except ImportError:
-        pass
-
     return ApiResourceResponse(**resource_dict)
+
+
+@router.post("/execute", status_code=status.HTTP_200_OK)
+async def execute_resource(
+    request: ExecuteResourceRequest = Body(...),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Generic endpoint to execute any API resource.
+
+    This endpoint accepts:
+    - resource_id: UUID of the API resource to execute
+    - connection_id: Database connection ID (UUID) or slug (string)
+    - parameters: Dictionary with resource-specific parameters
+
+    Returns the execution result (rows for SELECT, rowCount for DML, or chain results).
+
+    Example request:
+    {
+        "resource_id": "abc-123-def",
+        "connection_id": "my-postgres-db",
+        "parameters": {
+            "param1": "value1",
+            "param2": 123
+        }
+    }
+    """
+    # Import here to avoid circular dependency
+    from app.core.dynamic_routes import execute_dynamic_endpoint_logic
+
+    # Fetch API resource
+    api_resource = db.query(ApiResource).filter(ApiResource.id == request.resource_id).first()
+    if not api_resource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"API resource with id {request.resource_id} not found"
+        )
+
+    # Validate it's active
+    if not api_resource.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="API resource is not active"
+        )
+
+    # Execute resource using existing logic
+    result = await execute_dynamic_endpoint_logic(
+        api_resource=api_resource,
+        connection_id=request.connection_id,
+        parameters=request.parameters,
+        db=db
+    )
+
+    return result
 
 
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -373,13 +422,6 @@ def delete_api_resource(
 
     db.delete(api_resource)
     db.commit()
-
-    # Trigger dynamic route refresh
-    try:
-        from app.core.dynamic_routes import refresh_dynamic_routes
-        refresh_dynamic_routes(db)
-    except ImportError:
-        pass
 
 
 @router.patch("/{id}/toggle", response_model=ApiResourceResponse)
@@ -419,11 +461,60 @@ def toggle_api_resource(
         "updatedAt": api_resource.updated_at,
     }
 
-    # Trigger dynamic route refresh
-    try:
-        from app.core.dynamic_routes import refresh_dynamic_routes
-        refresh_dynamic_routes(db)
-    except ImportError:
-        pass
-
     return ApiResourceResponse(**resource_dict)
+
+
+@router.post("/execute", status_code=status.HTTP_200_OK)
+async def execute_resource(
+    request: ExecuteResourceRequest = Body(...),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Generic endpoint to execute any API resource.
+
+    This endpoint accepts:
+    - resource_id: UUID of the API resource to execute
+    - connection_id: Database connection ID (UUID) or slug (string)
+    - parameters: Dictionary with resource-specific parameters
+
+    Returns the execution result (rows for SELECT, rowCount for DML, or chain results).
+
+    Example request:
+    {
+        "resource_id": "abc-123-def",
+        "connection_id": "my-postgres-db",
+        "parameters": {
+            "param1": "value1",
+            "param2": 123
+        }
+    }
+    """
+    # Import here to avoid circular dependency
+    from app.core.dynamic_routes import execute_dynamic_endpoint_logic
+
+    # Fetch API resource
+    print(id)
+    api_resource = db.query(ApiResource).filter(ApiResource.id == request.resource_id).first()
+    print(api_resource)
+    if not api_resource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"API resource with id {request.resource_id} not found"
+        )
+
+    # Validate it's active
+    if not api_resource.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="API resource is not active"
+        )
+
+    # Execute resource using existing logic
+    result = await execute_dynamic_endpoint_logic(
+        api_resource=api_resource,
+        connection_id=request.connection_id,
+        parameters=request.parameters,
+        db=db
+    )
+
+    return result

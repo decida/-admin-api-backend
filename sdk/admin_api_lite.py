@@ -94,12 +94,12 @@ class AdminAPILite:
         """
         Execute API resource by its ID.
 
-        This method first retrieves the resource metadata to get its path,
-        then executes the resource with the provided parameters.
+        This method calls the generic /api/v1/api-resources/execute endpoint
+        passing the resource_id, connection_id, and parameters.
 
         Args:
             resource_id: UUID of the API resource to execute
-            connection_id: UUID of the database connection to use
+            connection_id: Database connection ID (UUID) or slug (string)
             parameters: Dictionary of parameters to pass to the resource (optional)
 
         Returns:
@@ -140,15 +140,15 @@ class AdminAPILite:
             >>> if result["success"]:
             ...     print(f"Got {result['rowCount']} rows")
         """
-        # Step 1: Get resource metadata to find its path
-        resource = self._get_resource(resource_id)
+        # Execute resource using generic endpoint
+        endpoint = f"{self.api_prefix}/api-resources/execute"
+        data = {
+            "resource_id": resource_id,
+            "connection_id": connection_id,
+            "parameters": parameters or {}
+        }
 
-        # Step 2: Execute resource using its path
-        return self._execute_resource(
-            path=resource["path"],
-            connection_id=connection_id,
-            parameters=parameters or {}
-        )
+        return self._make_request("POST", endpoint, data=data)
 
     def list_api_resources(self, active_only: bool = True) -> list[Dict[str, Any]]:
         """
@@ -203,49 +203,6 @@ class AdminAPILite:
         """
         endpoint = f"{self.api_prefix}/databases/{database_id}"
         return self._make_request("GET", endpoint)
-
-    def _get_resource(self, resource_id: str) -> Dict[str, Any]:
-        """
-        Get API resource metadata by ID.
-
-        Args:
-            resource_id: UUID of the resource
-
-        Returns:
-            Dictionary containing resource metadata
-
-        Raises:
-            AdminAPILiteError: If resource not found or request fails
-        """
-        endpoint = f"{self.api_prefix}/api-resources/{resource_id}"
-        return self._make_request("GET", endpoint)
-
-    def _execute_resource(
-        self,
-        path: str,
-        connection_id: str,
-        parameters: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Execute API resource by path.
-
-        Args:
-            path: Resource path (e.g., "/api/v1/my-endpoint")
-            connection_id: UUID of the database connection
-            parameters: Parameters to pass to the resource
-
-        Returns:
-            Dictionary containing execution result
-
-        Raises:
-            AdminAPILiteError: If execution fails
-        """
-        data = {
-            "connectionId": connection_id,
-            **parameters
-        }
-
-        return self._make_request("POST", path, data=data)
 
     def _make_request(
         self,

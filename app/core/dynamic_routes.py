@@ -38,6 +38,7 @@ def replace_colon_parameters(
         SQL command with replaced values (with proper typing and defaults)
     """
     from app.utils.parameter_validation import extract_sql_parameters
+    from app.utils.datetime_formatter import format_datetime_for_sql
 
     # Extract parameters from SQL
     sql_params = extract_sql_parameters(sql_command)
@@ -70,8 +71,9 @@ def replace_colon_parameters(
                         # If not a valid number, treat as NULL
                         result_sql = result_sql.replace(placeholder, "NULL")
                 elif param_def.get('type') == "date":
-                    # Quotes for dates
-                    safe_value = str(value).replace("'", "''")
+                    # Format date properly for SQL Server (ISO 8601 format)
+                    formatted_date = format_datetime_for_sql(value, "tsql")
+                    safe_value = formatted_date.replace("'", "''")
                     result_sql = result_sql.replace(placeholder, f"'{safe_value}'")
                 else:  # string
                     # Escape single quotes and add quotes
@@ -89,7 +91,9 @@ def replace_colon_parameters(
             if param_def.get('type') == "number":
                 result_sql = result_sql.replace(placeholder, str(default_val))
             elif param_def.get('type') == "date":
-                safe_value = str(default_val).replace("'", "''")
+                # Format date properly for SQL Server
+                formatted_date = format_datetime_for_sql(default_val, "tsql")
+                safe_value = formatted_date.replace("'", "''")
                 result_sql = result_sql.replace(placeholder, f"'{safe_value}'")
             else:  # string
                 safe_value = str(default_val).replace("'", "''")
@@ -239,6 +243,7 @@ async def execute_dynamic_endpoint_logic(
 
             # For SELECT queries, fetch results
             if business_object.command_type.value == "select":
+                from app.utils.datetime_formatter import serialize_datetime
                 rows = []
                 for row in result:
                     # Convert row to dictionary
@@ -246,7 +251,7 @@ async def execute_dynamic_endpoint_logic(
                     # Convert non-serializable types to strings
                     for key, value in row_dict.items():
                         if not isinstance(value, (str, int, float, bool, type(None))):
-                            row_dict[key] = str(value)
+                            row_dict[key] = serialize_datetime(value)
                     rows.append(row_dict)
 
                 return {

@@ -233,6 +233,7 @@ def execute_business_object_sql(
                         # Only try to fetch if cursor.description exists (result set has columns)
                         if cursor.description is not None:
                             # This result set has columns (SELECT statement)
+                            from app.utils.datetime_formatter import serialize_datetime
                             column_names = [desc[0] for desc in cursor.description]
                             logger.info(f"Fetching result set with columns: {column_names}")
                             try:
@@ -244,7 +245,7 @@ def execute_business_object_sql(
                                         col_name = desc[0]
                                         value = row[i]
                                         if not isinstance(value, (str, int, float, bool, type(None))):
-                                            value = str(value)
+                                            value = serialize_datetime(value)
                                         row_dict[col_name] = value
                                     result_set.append(row_dict)
                                 all_results.append(result_set)
@@ -308,6 +309,7 @@ def execute_business_object_sql(
 
             # For SELECT queries, fetch results
             if business_object.command_type.value == "select":
+                from app.utils.datetime_formatter import serialize_datetime
                 logger.info(f"Processing SELECT query results")
                 rows = []
                 for row in result:
@@ -316,7 +318,7 @@ def execute_business_object_sql(
                     # Convert non-serializable types to strings
                     for key, value in row_dict.items():
                         if not isinstance(value, (str, int, float, bool, type(None))):
-                            row_dict[key] = str(value)
+                            row_dict[key] = serialize_datetime(value)
                     rows.append(row_dict)
                 logger.info(f"SELECT returned {len(rows)} rows")
                 return rows
@@ -327,13 +329,14 @@ def execute_business_object_sql(
                 try:
                     # Check if SQL has RETURNING clause
                     if "RETURNING" in final_sql.upper():
+                        from app.utils.datetime_formatter import serialize_datetime
                         logger.info(f"INSERT has RETURNING clause, reading results")
                         rows = []
                         for row in result:
                             row_dict = dict(row._mapping)
                             for key, value in row_dict.items():
                                 if not isinstance(value, (str, int, float, bool, type(None))):
-                                    row_dict[key] = str(value)
+                                    row_dict[key] = serialize_datetime(value)
                             rows.append(row_dict)
                         logger.info(f"RETURNING clause returned {len(rows)} rows: {rows}")
                         # Commit after consuming results

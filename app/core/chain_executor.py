@@ -200,6 +200,99 @@ def execute_business_object_sql(
 
     # Execute SQL
     try:
+        # Check if SQL is a T-SQL block with multiple statements
+        is_tsql_block = final_sql.strip().upper().startswith('DECLARE') or 'BEGIN TRANSACTION' in final_sql.upper()
+
+        if is_tsql_block:
+            logger.info(f"Detected T-SQL block with multiple statements, using raw connection")
+            # For T-SQL blocks with multiple result sets, use raw driver connection
+            from sqlalchemy import create_engine as ce
+            engine = ce(
+                connection.connection_string,
+                poolclass=None,
+                isolation_level="AUTOCOMMIT"
+            )
+
+            raw_conn = None
+            cursor = None
+            try:
+                raw_conn = engine.raw_connection()
+                logger.info(f"Raw connection created for T-SQL block execution")
+                cursor = raw_conn.cursor()
+
+                # Execute the T-SQL block
+                cursor.execute(final_sql)
+                logger.info(f"T-SQL block executed successfully")
+
+                # Fetch all result sets
+                all_results = []
+                has_more_results = True
+
+                while has_more_results:
+                    try:
+                        # Only try to fetch if cursor.description exists (result set has columns)
+                        if cursor.description is not None:
+                            # This result set has columns (SELECT statement)
+                            column_names = [desc[0] for desc in cursor.description]
+                            logger.info(f"Fetching result set with columns: {column_names}")
+                            try:
+                                rows = cursor.fetchall()
+                                result_set = []
+                                for row in rows:
+                                    row_dict = {}
+                                    for i, desc in enumerate(cursor.description):
+                                        col_name = desc[0]
+                                        value = row[i]
+                                        if not isinstance(value, (str, int, float, bool, type(None))):
+                                            value = str(value)
+                                        row_dict[col_name] = value
+                                    result_set.append(row_dict)
+                                all_results.append(result_set)
+                                logger.info(f"Result set has {len(result_set)} rows")
+                            except Exception as fetch_error:
+                                logger.warning(f"Error fetching rows from result set: {str(fetch_error)}")
+                        else:
+                            logger.info(f"Result set has no columns (non-SELECT statement like UPDATE/DELETE)")
+                    except Exception as e:
+                        logger.warning(f"Error processing result set: {str(e)}")
+
+                    # Try to get next result set
+                    try:
+                        has_more_results = cursor.nextset()
+                        if has_more_results:
+                            logger.info(f"Moving to next result set")
+                        else:
+                            logger.info(f"No more result sets")
+                    except Exception as e:
+                        logger.warning(f"Error moving to next result set (HY010 errors expected for non-SELECT): {str(e)}")
+                        has_more_results = False
+
+                # Return the last result set (usually the final SELECT)
+                if all_results:
+                    logger.info(f"Returning last result set from T-SQL block ({len(all_results)} total sets)")
+                    return all_results[-1]
+                else:
+                    logger.info(f"T-SQL block completed with no SELECT results")
+                    return []
+
+            finally:
+                if cursor:
+                    try:
+                        cursor.close()
+                    except Exception as e:
+                        logger.warning(f"Error closing cursor: {str(e)}")
+                if raw_conn:
+                    try:
+                        raw_conn.close()
+                    except Exception as e:
+                        logger.warning(f"Error closing connection: {str(e)}")
+                if engine:
+                    try:
+                        engine.dispose()
+                    except Exception as e:
+                        logger.warning(f"Error disposing engine: {str(e)}")
+
+        # Regular SQL execution for non-T-SQL blocks
         engine = create_engine(
             connection.connection_string,
             pool_pre_ping=True,
@@ -231,7 +324,6 @@ def execute_business_object_sql(
             elif business_object.command_type.value == "insert":
                 logger.info(f"Processing INSERT command")
                 # For INSERT, try to get inserted ID
-                # Try to get last inserted ID (PostgreSQL specific)
                 try:
                     # Check if SQL has RETURNING clause
                     if "RETURNING" in final_sql.upper():

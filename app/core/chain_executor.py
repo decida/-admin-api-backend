@@ -190,7 +190,8 @@ def execute_business_object_sql(
             parameters,
             business_object_params
         )
-        logger.info(f"Executing SQL: {final_sql[:200]}...")
+        logger.info(f"Executing SQL command: {business_object.command_type.value.upper()}")
+        logger.info(f"Full SQL: {final_sql}")
     except Exception as e:
         raise ChainExecutionException(
             f"Failed to replace parameters: {str(e)}",
@@ -206,11 +207,15 @@ def execute_business_object_sql(
             max_overflow=0,
         )
 
+        logger.info(f"Creating connection and executing SQL...")
         with engine.connect() as conn:
+            logger.info(f"Connection created, executing text command")
             result = conn.execute(text(final_sql))
+            logger.info(f"SQL executed successfully, result type: {type(result)}")
 
             # For SELECT queries, fetch results
             if business_object.command_type.value == "select":
+                logger.info(f"Processing SELECT query results")
                 rows = []
                 for row in result:
                     # Convert row to dictionary
@@ -220,15 +225,17 @@ def execute_business_object_sql(
                         if not isinstance(value, (str, int, float, bool, type(None))):
                             row_dict[key] = str(value)
                     rows.append(row_dict)
+                logger.info(f"SELECT returned {len(rows)} rows")
                 return rows
 
             elif business_object.command_type.value == "insert":
+                logger.info(f"Processing INSERT command")
                 # For INSERT, try to get inserted ID
-                conn.commit()
                 # Try to get last inserted ID (PostgreSQL specific)
                 try:
                     # Check if SQL has RETURNING clause
                     if "RETURNING" in final_sql.upper():
+                        logger.info(f"INSERT has RETURNING clause, reading results")
                         rows = []
                         for row in result:
                             row_dict = dict(row._mapping)
@@ -236,19 +243,41 @@ def execute_business_object_sql(
                                 if not isinstance(value, (str, int, float, bool, type(None))):
                                     row_dict[key] = str(value)
                             rows.append(row_dict)
+                        logger.info(f"RETURNING clause returned {len(rows)} rows: {rows}")
+                        # Commit after consuming results
+                        logger.info(f"Committing transaction")
+                        conn.commit()
                         if rows and len(rows) > 0:
                             # If RETURNING returned an id field, use it
                             if 'id' in rows[0]:
+                                logger.info(f"Returning insertedId from RETURNING clause: {rows[0]['id']}")
                                 return {"insertedId": rows[0]['id']}
-                    # Fallback: return rowcount
-                    return {"insertedId": result.rowcount}
-                except Exception:
-                    return {"insertedId": result.rowcount}
+                        # Fallback: return rowcount
+                        logger.info(f"Returning rowcount: {result.rowcount}")
+                        return {"insertedId": result.rowcount}
+                    else:
+                        # No RETURNING clause, just get rowcount before commit
+                        logger.info(f"INSERT without RETURNING clause, getting rowcount")
+                        rowcount = result.rowcount
+                        logger.info(f"Rowcount: {rowcount}, committing transaction")
+                        conn.commit()
+                        logger.info(f"Transaction committed, returning rowcount")
+                        return {"insertedId": rowcount}
+                except Exception as e:
+                    logger.error(f"Error processing INSERT result: {str(e)}", exc_info=True)
+                    rowcount = result.rowcount
+                    logger.info(f"Fallback: getting rowcount {rowcount}")
+                    conn.commit()
+                    return {"insertedId": rowcount}
 
             else:
+                logger.info(f"Processing {business_object.command_type.value.upper()} command")
                 # For UPDATE/DELETE, return affected rows
+                rowcount = result.rowcount
+                logger.info(f"Rowcount: {rowcount}, committing transaction")
                 conn.commit()
-                return {"affectedRows": result.rowcount}
+                logger.info(f"Transaction committed, returning affected rows")
+                return {"affectedRows": rowcount}
 
     except ChainExecutionException:
         raise
@@ -288,27 +317,38 @@ def execute_chain(
     Raises:
         ChainExecutionException: If execution fails at any step
     """
+    logger.info(f"=" * 80)
+    logger.info(f"Starting execution chain with {len(chain)} steps")
+    logger.info(f"Connection ID: {connection_id}")
+
     # Fetch database connection (accepts both ID and slug)
     from app.utils.slug import get_database_by_id_or_slug
     try:
         connection = get_database_by_id_or_slug(connection_id, db)
+        logger.info(f"Database connection found: {connection.name} (ID: {connection.id})")
     except HTTPException as e:
+        logger.error(f"Connection with id or slug '{connection_id}' not found")
         raise ChainExecutionException(
             f"Connection with id or slug '{connection_id}' not found"
         )
 
     if connection.status.value != "active":
+        logger.error(f"Connection '{connection.name}' is not active (status: {connection.status.value})")
         raise ChainExecutionException(
             f"Connection '{connection.name}' is not active"
         )
 
+    logger.info(f"Connection is active, proceeding with chain execution")
+
     # Sort steps by order
     sorted_steps = sorted(chain, key=lambda s: s.order)
+    logger.info(f"Steps sorted by order")
 
     # Validate sequential order
     for i, step in enumerate(sorted_steps):
         expected_order = i + 1
         if step.order != expected_order:
+            logger.error(f"Invalid step order. Expected {expected_order}, got {step.order}")
             raise ChainExecutionException(
                 f"Invalid step order. Expected {expected_order}, got {step.order}"
             )
@@ -318,7 +358,9 @@ def execute_chain(
 
     for step_index, step in enumerate(sorted_steps):
         try:
-            logger.info(f"Executing step {step.order}: {step.business_object_name}")
+            logger.info(f"=" * 80)
+            logger.info(f"Executing step {step.order}/{len(sorted_steps)}: {step.business_object_name}")
+            logger.info(f"Business Object ID: {step.business_object_id}")
 
             # Fetch business object
             business_object = db.query(BusinessObject).filter(
@@ -332,6 +374,8 @@ def execute_chain(
                     business_object_name=step.business_object_name
                 )
 
+            logger.info(f"Business object found - Command type: {business_object.command_type.value}")
+
             # Build parameters
             parameters = build_step_parameters(
                 step,
@@ -340,12 +384,13 @@ def execute_chain(
                 request_payload
             )
 
-            logger.info(f"Step {step.order} parameters: {parameters}")
+            logger.info(f"Step {step.order} - Resolved parameters: {parameters}")
 
             # Convert business_object_params to dict format for execution
             bo_params = [p.model_dump(by_alias=True) for p in step.business_object_params]
 
             # Execute business object
+            logger.info(f"Step {step.order} - Executing business object...")
             result = execute_business_object_sql(
                 business_object,
                 parameters,
@@ -353,10 +398,12 @@ def execute_chain(
                 bo_params
             )
 
-            logger.info(f"Step {step.order} result: {result}")
+            logger.info(f"Step {step.order} - Execution completed successfully")
+            logger.info(f"Step {step.order} - Result: {result}")
 
             # Store result
             step_results.append(result)
+            logger.info(f"Step {step.order} - Result stored")
 
         except ChainExecutionException as e:
             # Add step context if not already present
@@ -375,6 +422,12 @@ def execute_chain(
             )
 
     # Return results
+    logger.info(f"=" * 80)
+    logger.info(f"Execution chain completed successfully")
+    logger.info(f"Total steps executed: {len(step_results)}")
+    logger.info(f"Final result: {step_results[-1] if step_results else None}")
+    logger.info(f"=" * 80)
+
     return {
         "success": True,
         "steps": len(step_results),

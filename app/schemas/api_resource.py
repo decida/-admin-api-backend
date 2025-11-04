@@ -130,12 +130,24 @@ class ChainExecutionError(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class ChainExecutionStepResult(BaseModel):
+    """Schema for a single step execution result in a chain."""
+    sequence: int = Field(..., description="Step execution sequence (1-based)")
+    name: str = Field(..., description="Step name (business object name)")
+    command_type: str = Field(..., alias='commandType', description="SQL command type (select, insert, update, delete)")
+    sql_command: str = Field(..., alias='sqlCommand', description="Complete SQL command with all parameters interpolated")
+    output: dict | list | None = Field(None, description="Query output (for SELECT statements)")
+    total: int = Field(..., description="Total rows returned (SELECT) or affected (DML)")
+    execution_time: str = Field(..., alias='executionTime', description="Formatted execution time summary (e.g., 'Iniciou em 04/11/2025 as 09:50:01 e finalizou em 04/11/2025 as 09:51:02 totalizando 1 segundo')")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class ChainExecutionResponse(BaseModel):
     """Schema for execution chain response."""
     success: bool
-    steps: int | None = None
-    result: dict | list | None = None
-    all_results: list[dict | list] | None = Field(None, alias='allResults')
+    steps: list[ChainExecutionStepResult] | None = Field(None, description="Detailed results for each step in the chain")
+    total_execution_time: str | None = Field(None, alias='totalExecutionTime', description="Formatted total execution time for the entire chain")
     error: ChainExecutionError | None = None
 
     model_config = ConfigDict(populate_by_name=True)

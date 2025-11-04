@@ -7,6 +7,8 @@ business objects are executed sequentially with parameter mapping between steps.
 
 import base64
 import logging
+import re
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +21,64 @@ from app.models.database import Database
 from app.schemas.api_resource import ExecutionChainStep, ParameterMapping
 
 logger = logging.getLogger(__name__)
+
+
+def format_execution_time(start_time: datetime, end_time: datetime) -> str:
+    """
+    Format execution time summary.
+
+    Args:
+        start_time: Start datetime
+        end_time: End datetime
+
+    Returns:
+        Formatted string like "Iniciou em 04/11/2025 as 09:50:01 e finalizou em 04/11/2025 as 09:51:02 totalizando 1 segundo"
+    """
+    start_str = start_time.strftime("%d/%m/%Y as %H:%M:%S")
+    end_str = end_time.strftime("%d/%m/%Y as %H:%M:%S")
+
+    # Calculate duration
+    duration = end_time - start_time
+    total_seconds = int(duration.total_seconds())
+
+    # Format duration
+    if total_seconds < 1:
+        # Show milliseconds for very fast operations
+        milliseconds = int(duration.total_seconds() * 1000)
+        duration_str = f"{milliseconds} milissegundo(s)"
+    elif total_seconds < 60:
+        duration_str = f"{total_seconds} segundo(s)"
+    elif total_seconds < 3600:
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        duration_str = f"{minutes} minuto(s) e {seconds} segundo(s)"
+    else:
+        hours = total_seconds // 3600
+        remaining = total_seconds % 3600
+        minutes = remaining // 60
+        seconds = remaining % 60
+        duration_str = f"{hours} hora(s), {minutes} minuto(s) e {seconds} segundo(s)"
+
+    return f"Iniciou em {start_str} e finalizou em {end_str} totalizando {duration_str}"
+
+
+def clean_sql_command(sql: str) -> str:
+    """
+    Clean SQL command by removing line breaks and control characters.
+
+    Converts multi-line SQL to single line for logging/display purposes.
+
+    Args:
+        sql: Raw SQL command
+
+    Returns:
+        Cleaned SQL command with normalized whitespace
+    """
+    # Replace all whitespace sequences (including newlines, tabs) with single space
+    cleaned = re.sub(r'\s+', ' ', sql)
+    # Strip leading/trailing whitespace
+    cleaned = cleaned.strip()
+    return cleaned
 
 
 class ChainExecutionException(Exception):
@@ -156,7 +216,7 @@ def execute_business_object_sql(
     parameters: dict[str, Any],
     connection: Database,
     business_object_params: list[dict]
-) -> dict | list:
+) -> tuple[dict | list, str, str]:
     """
     Execute a business object SQL command.
 
@@ -167,12 +227,18 @@ def execute_business_object_sql(
         business_object_params: Parameter definitions
 
     Returns:
-        Execution result (dict for INSERT/UPDATE/DELETE, list for SELECT)
+        Tuple of (execution result, full SQL command with parameters, execution time summary)
+        - result: dict for INSERT/UPDATE/DELETE, list for SELECT
+        - sql: Complete SQL command with all parameters interpolated
+        - execution_time: Formatted string with start, end, and total time
 
     Raises:
         ChainExecutionException: If execution fails
     """
     from app.core.dynamic_routes import replace_colon_parameters
+
+    # Record start time
+    start_time = datetime.now()
 
     # Decode SQL command
     try:
@@ -268,13 +334,17 @@ def execute_business_object_sql(
                         logger.warning(f"Error moving to next result set (HY010 errors expected for non-SELECT): {str(e)}")
                         has_more_results = False
 
+                # Record end time and format execution time
+                end_time = datetime.now()
+                execution_time = format_execution_time(start_time, end_time)
+
                 # Return the last result set (usually the final SELECT)
                 if all_results:
                     logger.info(f"Returning last result set from T-SQL block ({len(all_results)} total sets)")
-                    return all_results[-1]
+                    return all_results[-1], final_sql, execution_time
                 else:
                     logger.info(f"T-SQL block completed with no SELECT results")
-                    return []
+                    return [], final_sql, execution_time
 
             finally:
                 if cursor:
@@ -321,7 +391,12 @@ def execute_business_object_sql(
                             row_dict[key] = serialize_datetime(value)
                     rows.append(row_dict)
                 logger.info(f"SELECT returned {len(rows)} rows")
-                return rows
+
+                # Record end time and format execution time
+                end_time = datetime.now()
+                execution_time = format_execution_time(start_time, end_time)
+
+                return rows, final_sql, execution_time
 
             elif business_object.command_type.value == "insert":
                 logger.info(f"Processing INSERT command")
@@ -342,14 +417,19 @@ def execute_business_object_sql(
                         # Commit after consuming results
                         logger.info(f"Committing transaction")
                         conn.commit()
+
+                        # Record end time and format execution time
+                        end_time = datetime.now()
+                        execution_time = format_execution_time(start_time, end_time)
+
                         if rows and len(rows) > 0:
                             # If RETURNING returned an id field, use it
                             if 'id' in rows[0]:
                                 logger.info(f"Returning insertedId from RETURNING clause: {rows[0]['id']}")
-                                return {"insertedId": rows[0]['id']}
+                                return {"insertedId": rows[0]['id']}, final_sql, execution_time
                         # Fallback: return rowcount
                         logger.info(f"Returning rowcount: {result.rowcount}")
-                        return {"insertedId": result.rowcount}
+                        return {"insertedId": result.rowcount}, final_sql, execution_time
                     else:
                         # No RETURNING clause, just get rowcount before commit
                         logger.info(f"INSERT without RETURNING clause, getting rowcount")
@@ -357,13 +437,23 @@ def execute_business_object_sql(
                         logger.info(f"Rowcount: {rowcount}, committing transaction")
                         conn.commit()
                         logger.info(f"Transaction committed, returning rowcount")
-                        return {"insertedId": rowcount}
+
+                        # Record end time and format execution time
+                        end_time = datetime.now()
+                        execution_time = format_execution_time(start_time, end_time)
+
+                        return {"insertedId": rowcount}, final_sql, execution_time
                 except Exception as e:
                     logger.error(f"Error processing INSERT result: {str(e)}", exc_info=True)
                     rowcount = result.rowcount
                     logger.info(f"Fallback: getting rowcount {rowcount}")
                     conn.commit()
-                    return {"insertedId": rowcount}
+
+                    # Record end time and format execution time
+                    end_time = datetime.now()
+                    execution_time = format_execution_time(start_time, end_time)
+
+                    return {"insertedId": rowcount}, final_sql, execution_time
 
             else:
                 logger.info(f"Processing {business_object.command_type.value.upper()} command")
@@ -372,7 +462,12 @@ def execute_business_object_sql(
                 logger.info(f"Rowcount: {rowcount}, committing transaction")
                 conn.commit()
                 logger.info(f"Transaction committed, returning affected rows")
-                return {"affectedRows": rowcount}
+
+                # Record end time and format execution time
+                end_time = datetime.now()
+                execution_time = format_execution_time(start_time, end_time)
+
+                return {"affectedRows": rowcount}, final_sql, execution_time
 
     except ChainExecutionException:
         raise
@@ -412,8 +507,12 @@ def execute_chain(
     Raises:
         ChainExecutionException: If execution fails at any step
     """
+    # Record overall chain start time
+    chain_start_time = datetime.now()
+
     logger.info(f"=" * 80)
     logger.info(f"Starting execution chain with {len(chain)} steps")
+    logger.info(f"Chain started at: {chain_start_time.strftime('%d/%m/%Y as %H:%M:%S')}")
     logger.info(f"Connection ID: {connection_id}")
 
     # Fetch database connection (accepts both ID and slug)
@@ -449,7 +548,8 @@ def execute_chain(
             )
 
     # Execute steps
-    step_results: list[Any] = []
+    step_results: list[Any] = []  # Store raw results for chain parameter resolution
+    step_details: list[dict] = []  # Store detailed step information
 
     for step_index, step in enumerate(sorted_steps):
         try:
@@ -486,7 +586,7 @@ def execute_chain(
 
             # Execute business object
             logger.info(f"Step {step.order} - Executing business object...")
-            result = execute_business_object_sql(
+            result, full_sql, execution_time = execute_business_object_sql(
                 business_object,
                 parameters,
                 connection,
@@ -495,8 +595,37 @@ def execute_chain(
 
             logger.info(f"Step {step.order} - Execution completed successfully")
             logger.info(f"Step {step.order} - Result: {result}")
+            logger.info(f"Step {step.order} - Execution time: {execution_time}")
 
-            # Store result
+            # Calculate total (rows for SELECT, affected rows for DML)
+            if isinstance(result, list):
+                # SELECT query: count rows in result
+                total = len(result)
+            elif isinstance(result, dict):
+                # DML query: get affected/inserted rows
+                if "affectedRows" in result:
+                    total = result["affectedRows"]
+                elif "insertedId" in result:
+                    total = result["insertedId"] if isinstance(result["insertedId"], int) else 1
+                else:
+                    total = 0
+            else:
+                total = 0
+
+            # Create detailed step information
+            step_detail = {
+                "sequence": step.order,
+                "name": step.business_object_name,
+                "command_type": business_object.command_type.value,
+                "sql_command": clean_sql_command(full_sql),
+                "output": result if isinstance(result, list) else None,
+                "total": total,
+                "execution_time": execution_time
+            }
+            step_details.append(step_detail)
+            logger.info(f"Step {step.order} - Detail: {step_detail}")
+
+            # Store raw result for chain parameter resolution
             step_results.append(result)
             logger.info(f"Step {step.order} - Result stored")
 
@@ -516,16 +645,20 @@ def execute_chain(
                 details=str(e)
             )
 
+    # Record overall chain end time and format
+    chain_end_time = datetime.now()
+    total_execution_time = format_execution_time(chain_start_time, chain_end_time)
+
     # Return results
     logger.info(f"=" * 80)
     logger.info(f"Execution chain completed successfully")
     logger.info(f"Total steps executed: {len(step_results)}")
     logger.info(f"Final result: {step_results[-1] if step_results else None}")
+    logger.info(f"Chain execution time: {total_execution_time}")
     logger.info(f"=" * 80)
 
     return {
         "success": True,
-        "steps": len(step_results),
-        "result": step_results[-1] if step_results else None,
-        "allResults": step_results
+        "steps": step_details,  # Detailed step information with results
+        "total_execution_time": total_execution_time  # Overall chain execution time
     }

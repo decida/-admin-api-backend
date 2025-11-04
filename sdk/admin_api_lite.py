@@ -27,11 +27,17 @@ Usage:
             # Single business object result
             print(f"Rows returned: {result['rowCount']}")
             print(f"Data: {result['rows']}")
-        elif "result" in result:
+        elif "steps" in result and isinstance(result["steps"], list):
             # Chain execution result
-            print(f"Steps executed: {result['steps']}")
+            print(f"Steps executed: {len(result['steps'])}")
             print(f"Final result: {result['result']}")
-            print(f"All results: {result['allResults']}")
+            # Detailed step information
+            for step in result.get('steps', []):
+                print(f"\n  Step {step['sequence']}: {step['name']}")
+                print(f"    Type: {step['commandType']}")
+                print(f"    Total: {step['total']}")
+                if step.get('output'):
+                    print(f"    Output: {step['output']}")
     else:
         print(f"Execution failed: {result.get('error')}")
 """
@@ -116,9 +122,19 @@ class AdminAPILite:
             For chain execution:
             {
                 "success": bool,
-                "steps": int,            # Number of steps executed
-                "result": dict | list,   # Final result from last step
-                "allResults": list,      # Results from all steps
+                "totalExecutionTime": str,  # Total execution time for the chain
+                "steps": [                  # Detailed results for each step
+                    {
+                        "sequence": int,          # Step execution order (1-based)
+                        "name": str,              # Step name (business object name)
+                        "commandType": str,       # SQL command type (select, insert, update, delete)
+                        "sqlCommand": str,        # Complete SQL with all parameters interpolated (single line)
+                        "output": list | None,    # Query results (for SELECT statements)
+                        "total": int,             # Rows returned (SELECT) or affected (DML)
+                        "executionTime": str      # Formatted execution time for this step
+                    },
+                    ...
+                ],
                 "error": {               # Error details if failed
                     "message": str,
                     "step": int,
@@ -337,11 +353,21 @@ def example_basic_execution():
                 print(f"  Data: {result['rows'][:3]}...")  # Show first 3 rows
 
             # Handle chain execution result
-            elif "result" in result:
-                print(f"  Steps executed: {result['steps']}")
-                print(f"  Final result: {result['result']}")
-                if result.get("allResults"):
-                    print(f"  All step results available: {len(result['allResults'])} steps")
+            elif "steps" in result and isinstance(result["steps"], list):
+                print(f"  Chain steps executed: {len(result['steps'])}")
+                if result.get("totalExecutionTime"):
+                    print(f"  Total time: {result['totalExecutionTime']}")
+
+                # Display detailed step information
+                for step in result['steps']:
+                    print(f"\n  Step {step['sequence']}: {step['name']}")
+                    print(f"    Command Type: {step['commandType']}")
+                    print(f"    Total (rows/affected): {step['total']}")
+                    print(f"    SQL: {step['sqlCommand']}")
+                    if step.get('executionTime'):
+                        print(f"    Time: {step['executionTime']}")
+                    if step.get('output') and isinstance(step['output'], list):
+                        print(f"    Output rows: {len(step['output'])}")
         else:
             print(f"✗ Execution failed: {result.get('error')}")
 
@@ -378,6 +404,48 @@ def example_with_auth_headers():
 
     except AdminAPILiteError as e:
         print(f"✗ Authentication failed: {e.message}")
+
+
+def example_chain_execution():
+    """Example: Chain execution with detailed step tracing"""
+    print("\n=== Example: Chain Execution with Step Tracing ===\n")
+
+    client = AdminAPILite("http://localhost:8000")
+
+    try:
+        result = client.execute_by_id(
+            resource_id="chain-resource-uuid",
+            connection_id="connection-uuid",
+            parameters={"user_id": 1}
+        )
+
+        if result["success"] and "steps" in result and isinstance(result["steps"], list):
+            print("✓ Chain execution successful!\n")
+
+            if result.get("totalExecutionTime"):
+                print(f"Total Chain Time: {result['totalExecutionTime']}\n")
+
+            # Display execution trace for debugging
+            for step in result['steps']:
+                print(f"Step {step['sequence']}: {step['name']}")
+                print(f"  Type: {step['commandType']}")
+                print(f"  Result Count: {step['total']}")
+                if step.get('executionTime'):
+                    print(f"  Time: {step['executionTime']}")
+                print(f"  SQL: {step['sqlCommand']}\n")
+
+                # For SELECT steps, show sample output
+                if step.get('output') and len(step['output']) > 0:
+                    print(f"  Sample output (first row):")
+                    first_row = step['output'][0]
+                    for key, value in first_row.items():
+                        print(f"    {key}: {value}")
+                    print()
+        else:
+            print(f"✗ Execution failed: {result.get('error')}")
+
+    except AdminAPILiteError as e:
+        print(f"✗ Request error: {e.message}")
 
 
 def example_error_handling():
@@ -437,7 +505,11 @@ if __name__ == "__main__":
     # Uncomment to run examples:
     # example_basic_execution()
     # example_with_auth_headers()
+    # example_chain_execution()  # New: Detailed chain execution tracing
     # example_error_handling()
 
     print("\nℹ️  Uncomment example functions in __main__ to run them")
     print("ℹ️  Replace UUIDs with real resource and connection IDs")
+    print("\nℹ️  For chain execution debugging:")
+    print("    - Use example_chain_execution() to see detailed step-by-step tracing")
+    print("    - Each step shows SQL, row count, and output data")

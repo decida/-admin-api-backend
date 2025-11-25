@@ -43,7 +43,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",  # Vite dev server
         "http://127.0.0.1:5173",  # Alternative localhost,
-        "http://decida-admin-api-frontend.woelbp.easypanel.host"
+        "http://decida-admin-api-frontend.woelbp.easypanel.host",
+        "http://decida-admin-api-frontend.wkmxos.easypanel.host"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],

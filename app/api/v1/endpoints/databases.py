@@ -14,6 +14,8 @@ from app.core.cache import (
 )
 from app.db.session import get_db
 from app.models.database import Database
+from app.models.business_object import BusinessObject
+from app.models.api_resource import ApiResource
 from app.schemas.database import (
     DatabaseCreate,
     DatabaseResponse,
@@ -104,8 +106,11 @@ async def backup_databases(db: Session = Depends(get_db)) -> BackupResponse:
     size_mb = calculate_size_mb(sql_script)
     size_bytes = len(sql_script.encode('utf-8'))
 
-    # Count records
-    total_records = db.query(Database).count()
+    # Count records from all three tables
+    databases_count = db.query(Database).count()
+    business_objects_count = db.query(BusinessObject).count()
+    api_resources_count = db.query(ApiResource).count()
+    total_records = databases_count + business_objects_count + api_resources_count
 
     return BackupResponse(
         sql_base64=sql_base64,
@@ -132,13 +137,19 @@ async def download_backup_sql(db: Session = Depends(get_db)):
     # Return as downloadable file
     filename = f"databases_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
 
+    # Count records from all three tables
+    databases_count = db.query(Database).count()
+    business_objects_count = db.query(BusinessObject).count()
+    api_resources_count = db.query(ApiResource).count()
+    total_records = databases_count + business_objects_count + api_resources_count
+
     return PlainTextResponse(
         content=sql_script,
         media_type="application/sql",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Backup-Size-MB": str(calculate_size_mb(sql_script)),
-            "X-Backup-Records": str(db.query(Database).count()),
+            "X-Backup-Records": str(total_records),
         }
     )
 

@@ -297,6 +297,12 @@ def delete_business_object(
     db.commit()
 
 
+@router.options("/{id}/test")
+async def options_test_business_object(id: UUID) -> dict:
+    """Handle preflight CORS request for test endpoint."""
+    return {}
+
+
 @router.post("/{id}/test", response_model=BusinessObjectTestResponse)
 def test_business_object(
     id: UUID,

@@ -34,20 +34,24 @@ def generate_unique_slug(name: str, db: Session) -> str:
     return final_slug
 
 
-def get_database_by_id_or_slug(id_or_slug: str, db: Session) -> Database:
+def get_database_by_id_or_slug(id_or_slug: str | UUID, db: Session) -> Database:
     """
     Get database by ID (if UUID) or slug (if alphanumeric string).
     Raises 404 if not found.
     """
     database: Optional[Database] = None
 
-    # Try to parse as UUID (numeric ID)
-    try:
-        database_id = UUID(id_or_slug)
-        database = db.query(Database).filter(Database.id == database_id).first()
-    except ValueError:
-        # Not a valid UUID, treat as slug
-        database = db.query(Database).filter(Database.slug == id_or_slug).first()
+    # If already a UUID object, use it directly
+    if isinstance(id_or_slug, UUID):
+        database = db.query(Database).filter(Database.id == id_or_slug).first()
+    else:
+        # Try to parse as UUID string
+        try:
+            database_id = UUID(id_or_slug)
+            database = db.query(Database).filter(Database.id == database_id).first()
+        except ValueError:
+            # Not a valid UUID, treat as slug
+            database = db.query(Database).filter(Database.slug == id_or_slug).first()
 
     if not database:
         raise HTTPException(

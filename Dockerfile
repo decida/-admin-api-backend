@@ -1,24 +1,30 @@
 FROM python:3.11-slim
 
-WORKDIR /app
+# Use root from the start
+USER root
 
-# Install system dependencies including ODBC drivers
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    postgresql-client \
-    unixodbc \
-    unixodbc-dev \
-    curl \
-    gnupg2 \
-    apt-transport-https \
-    ca-certificates \
+# Update SO and install tools
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y \
+        gcc \
+        g++ \
+        postgresql-client \
+        unixodbc \
+        unixodbc-dev \
+        curl \
+        gnupg2 \
+        apt-transport-https \
+        ca-certificates \
+        iputils-ping \
+        telnet \
     && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql-release.list \
     && apt-get update \
     && ACCEPT_EULA=Y apt-get install -y msodbcsql17 msodbcsql18 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
 
 # Install Poetry
 RUN pip install poetry==1.7.1
@@ -38,12 +44,11 @@ RUN poetry install --no-root && rm -rf $POETRY_CACHE_DIR
 # Copy application code
 COPY . .
 
-# Create a non-root user
+# Create user (optional, but we stay as root for debugging)
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
 
 # Expose port
 EXPOSE 8000
 
-# Run the application
+# Default command
 CMD ["poetry", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

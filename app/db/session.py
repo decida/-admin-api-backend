@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from urllib.parse import quote, urlparse, urlunparse
+from urllib.parse import quote_plus, urlparse, urlunparse
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -8,54 +8,17 @@ from app.core.config import settings
 
 
 def encode_database_url(database_url: str) -> str:
-    """
-    Encode special characters in database URL credentials.
-
-    Parses the database URL and applies URL encoding to username and password
-    to handle special characters (like @, :, %, etc.) that could break the connection string.
-
-    Args:
-        database_url: The raw database URL from environment variable
-
-    Returns:
-        The database URL with properly encoded credentials
-
-    Example:
-        Input:  "postgresql://user:p@ss%word@localhost:5432/dbname"
-        Output: "postgresql://user:p%40ss%25word@localhost:5432/dbname"
-    """
+    """Encode password in database URL to handle special characters."""
     parsed = urlparse(database_url)
+    if not parsed.password:
+        return database_url
 
-    if parsed.username:
-        # URL encode username and password, safe='' to encode all special chars
-        encoded_username = quote(parsed.username, safe="")
-        encoded_password = (
-            quote(parsed.password, safe="") if parsed.password else ""
-        )
+    encoded_password = quote_plus(parsed.password)
+    netloc = f"{parsed.username}:{encoded_password}@{parsed.hostname}"
+    if parsed.port:
+        netloc += f":{parsed.port}"
 
-        # Reconstruct netloc with encoded credentials
-        if encoded_password:
-            netloc = f"{encoded_username}:{encoded_password}@{parsed.hostname}"
-        else:
-            netloc = f"{encoded_username}@{parsed.hostname}"
-
-        # Add port if present
-        if parsed.port:
-            netloc += f":{parsed.port}"
-
-        # Reconstruct the URL
-        return urlunparse(
-            (
-                parsed.scheme,
-                netloc,
-                parsed.path,
-                parsed.params,
-                parsed.query,
-                parsed.fragment,
-            )
-        )
-
-    return database_url
+    return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
 
 
 # Create engine

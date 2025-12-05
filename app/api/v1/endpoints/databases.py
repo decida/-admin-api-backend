@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from app.core.crypto import decrypt_connection_string, encrypt_connection_string
+from app.core.crypto import (
+    decrypt_connection_string,
+    encrypt_connection_string,
+    encode_database_url,
+    decode_database_url,
+)
 from app.core.cache import (
     get_cache,
     set_cache,
@@ -52,7 +57,7 @@ async def get_databases(
     # Get from database
     databases = db.query(Database).offset(skip).limit(limit).all()
 
-    # Encrypt connection strings before returning
+    # Decode and encrypt connection strings before returning
     result = []
     for database in databases:
         db_dict = {
@@ -60,7 +65,7 @@ async def get_databases(
             "name": database.name,
             "slug": database.slug,
             "type": database.type,
-            "connection_string": encrypt_connection_string(database.connection_string),
+            "connection_string": encrypt_connection_string(decode_database_url(database.connection_string)),
             "description": database.description,
             "status": database.status,
             "created_at": database.created_at.isoformat(),
@@ -229,13 +234,13 @@ async def get_database(
     # Get from database
     database = get_database_by_id_or_slug(id_or_slug, db)
 
-    # Encrypt connection string before returning
+    # Decode and encrypt connection string before returning
     db_dict = {
         "id": str(database.id),
         "name": database.name,
         "slug": database.slug,
         "type": database.type,
-        "connection_string": encrypt_connection_string(database.connection_string),
+        "connection_string": encrypt_connection_string(decode_database_url(database.connection_string)),
         "description": database.description,
         "status": database.status,
         "created_at": database.created_at.isoformat(),
@@ -269,9 +274,10 @@ async def create_database(database_in: DatabaseCreate, db: Session = Depends(get
             detail=f"Database with slug '{slug}' already exists",
         )
 
-    # Store connection string as plain text in DB
+    # Store encoded connection string in DB
     database_data = database_in.model_dump()
     database_data["slug"] = slug
+    database_data["connection_string"] = encode_database_url(database_data["connection_string"])
     database = Database(**database_data)
     db.add(database)
     db.commit()
@@ -280,13 +286,13 @@ async def create_database(database_in: DatabaseCreate, db: Session = Depends(get
     # Invalidate cache after creation
     await invalidate_database_cache()
 
-    # Return with encrypted connection string
+    # Return with decoded and encrypted connection string
     db_dict = {
         "id": str(database.id),
         "name": database.name,
         "slug": database.slug,
         "type": database.type,
-        "connection_string": encrypt_connection_string(database.connection_string),
+        "connection_string": encrypt_connection_string(decode_database_url(database.connection_string)),
         "description": database.description,
         "status": database.status,
         "created_at": database.created_at.isoformat(),
@@ -308,6 +314,9 @@ async def update_database(
 
     update_data = database_in.model_dump(exclude_unset=True)
     for field, value in update_data.items():
+        # Encode connection_string if it's being updated
+        if field == "connection_string":
+            value = encode_database_url(value)
         setattr(database, field, value)
 
     db.commit()
@@ -316,13 +325,13 @@ async def update_database(
     # Invalidate cache after update
     await invalidate_database_cache()
 
-    # Return with encrypted connection string
+    # Return with decoded and encrypted connection string
     db_dict = {
         "id": str(database.id),
         "name": database.name,
         "slug": database.slug,
         "type": database.type,
-        "connection_string": encrypt_connection_string(database.connection_string),
+        "connection_string": encrypt_connection_string(decode_database_url(database.connection_string)),
         "description": database.description,
         "status": database.status,
         "created_at": database.created_at.isoformat(),
@@ -361,9 +370,12 @@ def test_database_connection(
         # Decrypt connection string before using
         decrypted_connection_string = decrypt_connection_string(connection_data.connection_string)
 
+        # Decode URL-encoded credentials
+        decoded_connection_string = decode_database_url(decrypted_connection_string)
+
         # Create engine with 10 second connection timeout
         engine = create_engine(
-            decrypted_connection_string,
+            decoded_connection_string,
             connect_args={"connect_timeout": 10},
             pool_pre_ping=True,
             pool_size=1,

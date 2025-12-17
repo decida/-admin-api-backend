@@ -15,6 +15,7 @@ from app.schemas.business_object import (
     BusinessObjectUpdate,
     BusinessObjectTestRequest,
     BusinessObjectTestResponse,
+    ExecuteSqlRequest,
 )
 from app.utils.parameter_validation import validate_parameters, convert_to_dict
 
@@ -401,6 +402,91 @@ def test_business_object(
                 )
             else:
                 # For INSERT/UPDATE/DELETE, commit and return affected rows
+                conn.commit()
+                return BusinessObjectTestResponse(
+                    success=True,
+                    rows=[],
+                    row_count=result.rowcount
+                )
+
+    except Exception as e:
+        error_message = str(e)
+
+        # Clean up common error messages
+        if "authentication" in error_message.lower() or "password" in error_message.lower():
+            error_message = "Authentication failed - check connection credentials"
+        elif "timeout" in error_message.lower():
+            error_message = "Query timeout - operation took too long"
+        elif "syntax" in error_message.lower():
+            error_message = f"SQL syntax error: {error_message}"
+
+        return BusinessObjectTestResponse(
+            success=False,
+            error=error_message
+        )
+
+
+@router.post("/execute", response_model=BusinessObjectTestResponse)
+def execute_sql(
+    request: ExecuteSqlRequest,
+    db: Session = Depends(get_db)
+) -> BusinessObjectTestResponse:
+    """
+    Execute generic SQL command on a specified connection.
+    Supports both DML and DDL operations.
+
+    Process:
+    1. Fetch connection by ID or slug
+    2. Execute SQL command on specified connection
+    3. Return results or error
+    """
+    # 1. Fetch connection (accepts both ID and slug)
+    from app.utils.slug import get_database_by_id_or_slug
+    try:
+        connection = get_database_by_id_or_slug(request.connection_id, db)
+    except HTTPException:
+        return BusinessObjectTestResponse(
+            success=False,
+            error=f"Connection with id or slug '{request.connection_id}' not found"
+        )
+
+    if connection.status.value != "active":
+        return BusinessObjectTestResponse(
+            success=False,
+            error=f"Connection {connection.name} is not active"
+        )
+
+    # 2. Execute SQL on connection
+    try:
+        engine = create_engine(
+            connection.connection_string,
+            pool_pre_ping=True,
+            pool_size=1,
+            max_overflow=0,
+        )
+
+        with engine.connect() as conn:
+            result = conn.execute(text(request.sql_command))
+
+            # Check if it's a SELECT query
+            if result.returns_rows:
+                rows = []
+                for row in result:
+                    # Convert row to dictionary
+                    row_dict = dict(row._mapping)
+                    # Convert non-serializable types to strings
+                    for key, value in row_dict.items():
+                        if not isinstance(value, (str, int, float, bool, type(None))):
+                            row_dict[key] = str(value)
+                    rows.append(row_dict)
+
+                return BusinessObjectTestResponse(
+                    success=True,
+                    rows=rows,
+                    row_count=len(rows)
+                )
+            else:
+                # For DML/DDL commands, commit and return affected rows
                 conn.commit()
                 return BusinessObjectTestResponse(
                     success=True,

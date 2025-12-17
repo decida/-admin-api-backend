@@ -121,3 +121,9 @@ class BusinessObjectTestResponse(BaseModel):
     error: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)
+
+
+class ExecuteSqlRequest(BaseModel):
+    """Request schema for executing generic SQL commands."""
+    connection_id: str = Field(..., description="UUID or slug of the connection to use")
+    sql_command: str = Field(..., description="SQL command to execute (DML or DDL)")

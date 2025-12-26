@@ -3,10 +3,11 @@ import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.core.engine_pool import get_engine_pool
 from app.models.business_object import BusinessObject
 from app.models.database import Database
 from app.schemas.business_object import (
@@ -373,11 +374,11 @@ def test_business_object(
 
     # 5. Execute SQL on connection
     try:
-        engine = create_engine(
-            connection.connection_string,
-            pool_pre_ping=True,
-            pool_size=1,
-            max_overflow=0,
+        # Get cached engine from pool manager (or create if not cached)
+        engine_pool = get_engine_pool()
+        engine = engine_pool.get_engine(
+            database_id=connection.id,
+            connection_string=connection.connection_string
         )
 
         with engine.connect() as conn:
@@ -458,11 +459,11 @@ def execute_sql(
 
     # 2. Execute SQL on connection
     try:
-        engine = create_engine(
-            connection.connection_string,
-            pool_pre_ping=True,
-            pool_size=1,
-            max_overflow=0,
+        # Get cached engine from pool manager (or create if not cached)
+        engine_pool = get_engine_pool()
+        engine = engine_pool.get_engine(
+            database_id=connection.id,
+            connection_string=connection.connection_string
         )
 
         with engine.connect() as conn:

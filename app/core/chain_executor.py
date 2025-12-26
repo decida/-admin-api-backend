@@ -13,12 +13,13 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.business_object import BusinessObject
 from app.models.database import Database
 from app.schemas.api_resource import ExecutionChainStep, ParameterMapping
+from app.core.engine_pool import get_engine_pool
 
 logger = logging.getLogger(__name__)
 
@@ -270,13 +271,13 @@ def execute_business_object_sql(
         is_tsql_block = final_sql.strip().upper().startswith('DECLARE') or 'BEGIN TRANSACTION' in final_sql.upper()
 
         if is_tsql_block:
-            logger.info(f"Detected T-SQL block with multiple statements, using raw connection")
-            # For T-SQL blocks with multiple result sets, use raw driver connection
-            from sqlalchemy import create_engine as ce
-            engine = ce(
-                connection.connection_string,
-                poolclass=None,
-                isolation_level="AUTOCOMMIT"
+            logger.info(f"Detected T-SQL block with multiple statements, using NullPool engine")
+            # For T-SQL blocks with multiple result sets, use NullPool (cached by engine pool manager)
+            engine_pool = get_engine_pool()
+            engine = engine_pool.get_engine(
+                database_id=connection.id,
+                connection_string=connection.connection_string,
+                use_null_pool=True  # Special T-SQL requirements
             )
 
             raw_conn = None
@@ -357,18 +358,14 @@ def execute_business_object_sql(
                         raw_conn.close()
                     except Exception as e:
                         logger.warning(f"Error closing connection: {str(e)}")
-                if engine:
-                    try:
-                        engine.dispose()
-                    except Exception as e:
-                        logger.warning(f"Error disposing engine: {str(e)}")
+                # NOTE: Do NOT dispose engine - it's cached by engine pool manager
+                # Engine will be disposed automatically when expired from cache
 
         # Regular SQL execution for non-T-SQL blocks
-        engine = create_engine(
-            connection.connection_string,
-            pool_pre_ping=True,
-            pool_size=1,
-            max_overflow=0,
+        engine_pool = get_engine_pool()
+        engine = engine_pool.get_engine(
+            database_id=connection.id,
+            connection_string=connection.connection_string
         )
 
         logger.info(f"Creating connection and executing SQL...")

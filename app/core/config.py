@@ -30,5 +30,12 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
+    # Engine Pool Configuration (for dynamic database connections)
+    ENGINE_POOL_SIZE: int = int(os.getenv("ENGINE_POOL_SIZE", "10"))
+    ENGINE_POOL_MAX_OVERFLOW: int = int(os.getenv("ENGINE_POOL_MAX_OVERFLOW", "20"))
+    ENGINE_POOL_TTL: int = int(os.getenv("ENGINE_POOL_TTL", "1800"))  # 30 minutes
+    ENGINE_POOL_PRE_PING: bool = os.getenv("ENGINE_POOL_PRE_PING", "true").lower() == "true"
+    ENGINE_POOL_CLEANUP_INTERVAL: int = int(os.getenv("ENGINE_POOL_CLEANUP_INTERVAL", "300"))  # 5 minutes
+
 
 settings = Settings()

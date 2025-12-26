@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.cache import close_redis
+from app.core.engine_pool import get_engine_pool
 
 # Configure logging
 logging.basicConfig(
@@ -20,9 +21,18 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting application...")
 
+    # Initialize engine pool manager
+    engine_pool = get_engine_pool()
+    engine_pool.start_cleanup_thread()
+    logger.info("Engine pool manager initialized")
+
     yield
 
     # Shutdown
+    logger.info("Shutting down engine pool manager...")
+    engine_pool.stop_cleanup_thread()
+    engine_pool.dispose_all()
+
     await close_redis()
     logger.info("Application shutdown complete")
 

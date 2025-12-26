@@ -10,12 +10,13 @@ import logging
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.api_resource import ApiResource
 from app.models.business_object import BusinessObject
 from app.models.database import Database
+from app.core.engine_pool import get_engine_pool
 
 logger = logging.getLogger(__name__)
 
@@ -231,11 +232,11 @@ async def execute_dynamic_endpoint_logic(
 
     # 6. Execute SQL
     try:
-        engine = create_engine(
-            connection.connection_string,
-            pool_pre_ping=True,
-            pool_size=1,
-            max_overflow=0,
+        # Get cached engine from pool manager (or create if not cached)
+        engine_pool = get_engine_pool()
+        engine = engine_pool.get_engine(
+            database_id=connection.id,
+            connection_string=connection.connection_string
         )
 
         with engine.connect() as conn:

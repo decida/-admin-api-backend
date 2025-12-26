@@ -1,8 +1,11 @@
+import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.core.crypto import (
     decrypt_connection_string,
@@ -316,8 +319,14 @@ async def update_database(
     db.commit()
     db.refresh(database)
 
-    # Invalidate cache after update
+    # Invalidate caches after update
     await invalidate_database_cache()
+
+    # Invalidate engine pool cache (connection string may have changed)
+    from app.core.engine_pool import get_engine_pool
+    engine_pool = get_engine_pool()
+    engine_pool.invalidate(database.id)
+    logger.info(f"Invalidated engine cache for database {database.id} after update")
 
     # Return with encrypted connection string
     db_dict = {
@@ -342,11 +351,20 @@ async def delete_database(id_or_slug: str, db: Session = Depends(get_db)) -> Non
     """
     database = get_database_by_id_or_slug(id_or_slug, db)
 
+    # Get database ID before deletion
+    database_id = database.id
+
     db.delete(database)
     db.commit()
 
-    # Invalidate cache after deletion
+    # Invalidate caches after deletion
     await invalidate_database_cache()
+
+    # Invalidate engine pool cache (database deleted, dispose any cached engine)
+    from app.core.engine_pool import get_engine_pool
+    engine_pool = get_engine_pool()
+    engine_pool.invalidate(database_id)
+    logger.info(f"Invalidated engine cache for database {database_id} after deletion")
 
 
 @router.post("/ping", response_model=DatabaseTestConnectionResponse)

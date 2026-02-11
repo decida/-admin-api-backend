@@ -4,6 +4,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
+from sqlalchemy.engine import make_url, URL
 
 logger = logging.getLogger(__name__)
 
@@ -380,11 +381,23 @@ def test_database_connection(
 
     try:
         # Decrypt connection string before using
-        decrypted_connection_string = decrypt_connection_string(connection_data.connection_string)
+        decrypted_connection_string = make_url(decrypt_connection_string(connection_data.connection_string))
+
+        parsed_url = URL.create(
+            drivername=decrypted_connection_string.drivername,
+            username=decrypted_connection_string.username,
+            password=decrypted_connection_string.password,
+            host=decrypted_connection_string.host,
+            port=decrypted_connection_string.port,
+            database=decrypted_connection_string.database,
+            query=decrypted_connection_string.query
+        )
+
+        logger.info(parsed_url)
 
         # Create engine with 10 second connection timeout
         engine = create_engine(
-            decrypted_connection_string,
+            parsed_url,
             connect_args={"connect_timeout": 10},
             pool_pre_ping=True,
             pool_size=1,

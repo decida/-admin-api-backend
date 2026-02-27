@@ -1,5 +1,6 @@
 import logging
 from fastapi import FastAPI
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
@@ -45,14 +46,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+@app.middleware("http")
+async def allow_options(request, call_next):
+    if request.method == "OPTIONS":
+        return Response(status_code=200)
+    return await call_next(request)
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 # Include API router
